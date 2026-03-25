@@ -1,0 +1,20 @@
+ollama:
+  url: "http://localhost:11434"
+  model: "qwen3:8b"
+
+paperless_instances:
+  - name: "Home"
+    url: ""
+    token: ""
+    inbox_tag: "Inbox"
+
+  # Add more instances as needed:
+  # - name: "Work"
+  #   url: "https://paperless-work.example.com"
+  #   token: "another-api-token"
+  #   inbox_tag: "Inbox"
+
+processing:
+  max_content_length: 4000   # Max characters of document text sent to LLM
+  dry_run: false              # If true, log classifications but don't update documents
+  log_level: "INFO"           # DEBUG, INFO, WARNING, ERROR
