@@ -283,10 +283,11 @@ def process_instance(client: PaperlessClient, ollama_url: str, model: str, confi
     document_types = client.get_document_types()
     tags = client.get_tags()
 
-    for doc in unprocessed:
+    total = len(unprocessed)
+    for idx, doc in enumerate(unprocessed, 1):
         doc_id = doc["id"]
         doc_title = doc.get("title", f"Document {doc_id}")
-        logger.info("[%s] Processing: %s (id=%d)", client.name, doc_title, doc_id)
+        logger.info("[%s] [%d/%d] Processing: %s (id=%d)", client.name, idx, total, doc_title, doc_id)
 
         doc_start = time.monotonic()
         try:
