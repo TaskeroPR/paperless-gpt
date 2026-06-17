@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./config.yaml)",
+      "Read(//Users/patrick/Coden/paperless-gpt/config.yaml)",
+      "Bash(cat:*config.yaml*)",
+      "Bash(less:*config.yaml*)",
+      "Bash(more:*config.yaml*)",
+      "Bash(head:*config.yaml*)",
+      "Bash(tail:*config.yaml*)",
+      "Bash(grep:*config.yaml*)",
+      "Bash(rg:*config.yaml*)",
+      "Bash(awk:*config.yaml*)",
+      "Bash(sed:*config.yaml*)",
+      "Bash(nl:*config.yaml*)",
+      "Bash(xxd:*config.yaml*)",
+      "Bash(od:*config.yaml*)",
+      "Bash(strings:*config.yaml*)",
+      "Bash(cut:*config.yaml*)",
+      "Bash(sort:*config.yaml*)",
+      "Bash(vi:*config.yaml*)",
+      "Bash(vim:*config.yaml*)",
+      "Bash(nano:*config.yaml*)",
+      "Bash(python:*config.yaml*)",
+      "Bash(python3:*config.yaml*)"
+    ]
+  }
+}
