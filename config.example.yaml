@@ -1,6 +1,11 @@
-ollama:
-  url: "http://localhost:11434"
-  model: "qwen3:8b"
+llm:
+  # OpenAI-compatible endpoint. For LM Studio this is the server URL + /v1
+  # (start the server in LM Studio: Developer tab → Start Server).
+  base_url: "http://localhost:1234/v1"
+  # Model identifier as shown in LM Studio (the API id under /v1/models).
+  model: "qwen/qwen3-8b"
+  # LM Studio ignores the key, but the field is accepted by OpenAI-compatible clients.
+  api_key: "lm-studio"
 
 paperless_instances:
   - name: "Home"

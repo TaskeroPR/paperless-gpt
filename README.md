@@ -1,6 +1,6 @@
 # paperless-gpt
 
-A Python script that automatically classifies documents in your [Paperless-ngx](https://docs.paperless-ngx.com/) inbox using a local LLM via [Ollama](https://ollama.com/). Supports multiple Paperless-ngx instances.
+A Python script that automatically classifies documents in your [Paperless-ngx](https://docs.paperless-ngx.com/) inbox using a local LLM served through any OpenAI-compatible API — for example [LM Studio](https://lmstudio.ai/). Supports multiple Paperless-ngx instances.
 
 For each inbox document, the LLM analyzes the OCR text and assigns:
 
@@ -15,7 +15,7 @@ The LLM prefers existing correspondents, document types, and tags from your Pape
 ## Prerequisites
 
 - Python 3.10+
-- [Ollama](https://ollama.com/) installed and running
+- [LM Studio](https://lmstudio.ai/) (or any OpenAI-compatible LLM server) with a model loaded and the local server started
 - A Paperless-ngx instance with API access enabled
 - An API token for each instance (found in *My Profile* in the Paperless-ngx web UI)
 
@@ -40,9 +40,10 @@ cp config.example.yaml config.yaml
 Edit `config.yaml`:
 
 ```yaml
-ollama:
-  url: "http://localhost:11434"
-  model: "qwen3:8b"
+llm:
+  base_url: "http://localhost:1234/v1"   # LM Studio server URL + /v1
+  model: "qwen/qwen3-8b"                  # model id as shown under /v1/models
+  api_key: "lm-studio"                    # ignored by LM Studio, but accepted
 
 paperless_instances:
   - name: "Home"
@@ -63,8 +64,9 @@ processing:
 
 | Option | Description | Default |
 |---|---|---|
-| `ollama.url` | Ollama API endpoint | `http://localhost:11434` |
-| `ollama.model` | Ollama model to use | `qwen3:8b` |
+| `llm.base_url` | OpenAI-compatible API endpoint (LM Studio server + `/v1`) | `http://localhost:1234/v1` |
+| `llm.model` | Model id to use (as listed under `/v1/models`) | `qwen/qwen3-8b` |
+| `llm.api_key` | API key; LM Studio ignores it | `lm-studio` |
 | `paperless_instances[].name` | Display name for the instance | required |
 | `paperless_instances[].url` | Paperless-ngx base URL | required |
 | `paperless_instances[].token` | API token | required |
@@ -81,7 +83,7 @@ python process.py
 
 ### What it does
 
-1. Checks that the configured Ollama model is available (auto-pulls if not)
+1. Checks that the LLM server is reachable and the configured model is loaded
 2. For each Paperless-ngx instance:
    - Fetches all documents tagged with the inbox tag
    - Skips documents that were already processed in a previous run
@@ -108,28 +110,28 @@ The script tracks processed document IDs in `processed.json` (one entry per inst
 
 ## LLM Model
 
-The default model is `qwen3:8b`, which provides a good balance of accuracy and speed for document classification. It:
+The recommended model is Qwen3 8B (`qwen/qwen3-8b` in LM Studio), which provides a good balance of accuracy and speed for document classification. It:
 
 - Fits comfortably in 16GB RAM (~5.2GB at Q4 quantization)
 - Runs well on Apple Silicon
-- Supports structured JSON output
+- Supports structured JSON output (used here for reliable classification)
 - Handles both German and English documents
 
-If the model isn't available locally, the script pulls it automatically on first run.
+Download and load the model in LM Studio, then start the local server (Developer tab → Start Server). Unlike Ollama, LM Studio does **not** auto-download models on demand — the model must be loaded (or JIT-loading enabled) before running the script. Set `llm.model` to the model's API id, which you can confirm by visiting `http://localhost:1234/v1/models`.
 
-Other models that work well (set in `ollama.model`):
+Other models that work well:
 
 | Model | Size | Notes |
 |---|---|---|
-| `qwen3:8b` | ~5GB | Recommended default |
-| `qwen2.5:7b` | ~4.7GB | Good alternative |
-| `llama3.1:8b` | ~4.7GB | Strong general-purpose |
-| `mistral:7b` | ~4.1GB | Fast, efficient |
+| `qwen/qwen3-8b` | ~5GB | Recommended default |
+| `qwen2.5-7b-instruct` | ~4.7GB | Good alternative |
+| `meta-llama-3.1-8b-instruct` | ~4.7GB | Strong general-purpose |
+| `mistral-7b-instruct-v0.3` | ~4.1GB | Fast, efficient |
 
 ## How it works
 
 ```
-Paperless-ngx                    Ollama (local)
+Paperless-ngx                    LM Studio (local)
      |                                |
      |-- GET /api/tags/ ------------->|
      |-- GET /api/documents/ ------->|
@@ -138,8 +140,8 @@ Paperless-ngx                    Ollama (local)
      |                                |
      |   For each inbox document:     |
      |                                |
-     |          document text ------->| POST /api/chat
-     |          + existing metadata   | (structured JSON output)
+     |          document text ------->| POST /v1/chat/completions
+     |          + existing metadata   | (json_schema structured output)
      |                                |
      |          classification <------|
      |                                |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Classify Paperless-ngx inbox documents using a local Ollama LLM."""
+"""Classify Paperless-ngx inbox documents using a local LLM (LM Studio / OpenAI-compatible API)."""
 
 import json
 import logging
@@ -33,7 +33,7 @@ like invoice numbers, dates, or reference numbers when present.
 - date: Extract the primary document date in YYYY-MM-DD format. This is usually the date \
 the document was created or issued, NOT a due date or expiry date. Use null if undeterminable."""
 
-OLLAMA_SCHEMA = {
+LLM_SCHEMA = {
     "type": "object",
     "properties": {
         "title": {"type": "string"},
@@ -43,6 +43,7 @@ OLLAMA_SCHEMA = {
         "tags": {"type": "array", "items": {"type": "string"}},
     },
     "required": ["title", "date", "correspondent", "document_type", "tags"],
+    "additionalProperties": False,
 }
 
 
@@ -135,43 +136,35 @@ class PaperlessClient:
         return resp.json()
 
 
-def ensure_model(ollama_url: str, model: str) -> None:
-    """Check if the model is available locally, pull it if not."""
+def _auth_headers(api_key: str | None) -> dict:
+    return {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+
+def ensure_model(base_url: str, model: str, api_key: str | None = None) -> None:
+    """Verify the LLM server is reachable and the requested model is loaded.
+
+    Unlike Ollama, LM Studio does not pull models on demand — the model must
+    already be loaded in the LM Studio server (or set to load on request)."""
     try:
-        resp = requests.get(f"{ollama_url}/api/tags", timeout=10)
+        resp = requests.get(f"{base_url}/models", headers=_auth_headers(api_key), timeout=10)
         resp.raise_for_status()
     except requests.RequestException as e:
-        raise RuntimeError(f"Cannot connect to Ollama at {ollama_url}: {e}") from e
+        raise RuntimeError(
+            f"Cannot connect to LLM server at {base_url}: {e}. "
+            "Is the LM Studio server running? (Developer tab → Start Server)"
+        ) from e
 
-    available = [m["name"] for m in resp.json().get("models", [])]
-    # Check with and without :latest suffix
-    if model in available or f"{model}:latest" in available:
+    available = [m["id"] for m in resp.json().get("data", [])]
+    if model in available:
         logger.info("Model '%s' is available", model)
         return
 
-    # Also check if the model name without tag matches any available model
-    model_base = model.split(":")[0]
-    for name in available:
-        if name.split(":")[0] == model_base:
-            logger.info("Model '%s' is available (as '%s')", model, name)
-            return
-
-    logger.info("Model '%s' not found locally, pulling...", model)
-    resp = requests.post(
-        f"{ollama_url}/api/pull",
-        json={"name": model, "stream": True},
-        stream=True,
-        timeout=600,
+    logger.warning(
+        "Model '%s' is not in the loaded model list %s. "
+        "Proceeding anyway — LM Studio may load it on first request if JIT loading is enabled.",
+        model,
+        available,
     )
-    resp.raise_for_status()
-    for line in resp.iter_lines():
-        if line:
-            status = json.loads(line)
-            if "status" in status:
-                logger.info("Pull: %s", status["status"])
-            if status.get("error"):
-                raise RuntimeError(f"Failed to pull model '{model}': {status['error']}")
-    logger.info("Model '%s' pulled successfully", model)
 
 
 def truncate_text(text: str, max_length: int) -> str:
@@ -186,15 +179,16 @@ def truncate_text(text: str, max_length: int) -> str:
 
 
 def classify_document(
-    ollama_url: str,
+    base_url: str,
     model: str,
     document_text: str,
     correspondents: list[str],
     document_types: list[str],
     tags: list[str],
     max_content_length: int = 4000,
+    api_key: str | None = None,
 ) -> dict:
-    """Send document text to Ollama LLM and get structured classification back."""
+    """Send document text to the LLM and get structured classification back."""
     text = truncate_text(document_text, max_content_length)
 
     user_prompt = f"""Classify the following document.
@@ -220,16 +214,25 @@ DOCUMENT TEXT:
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
-        "format": OLLAMA_SCHEMA,
-        "options": {
-            "temperature": 0,
-            "num_ctx": 8192,
+        "temperature": 0,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "document_classification",
+                "strict": True,
+                "schema": LLM_SCHEMA,
+            },
         },
     }
 
-    resp = requests.post(f"{ollama_url}/api/chat", json=payload, timeout=300)
+    resp = requests.post(
+        f"{base_url}/chat/completions",
+        json=payload,
+        headers=_auth_headers(api_key),
+        timeout=300,
+    )
     resp.raise_for_status()
-    content = resp.json()["message"]["content"]
+    content = resp.json()["choices"][0]["message"]["content"]
     logger.debug("LLM raw response: %s", content)
     return json.loads(content)
 
@@ -254,7 +257,9 @@ def save_processed(instance_name: str, doc_ids: set[int]) -> None:
         json.dump(data, f, indent=2)
 
 
-def process_instance(client: PaperlessClient, ollama_url: str, model: str, config: dict) -> None:
+def process_instance(
+    client: PaperlessClient, base_url: str, model: str, config: dict, api_key: str | None = None
+) -> None:
     """Process all inbox documents for one Paperless-ngx instance."""
     processing = config.get("processing", {})
     dry_run = processing.get("dry_run", False)
@@ -297,13 +302,14 @@ def process_instance(client: PaperlessClient, ollama_url: str, model: str, confi
                 continue
 
             result = classify_document(
-                ollama_url=ollama_url,
+                base_url=base_url,
                 model=model,
                 document_text=content,
                 correspondents=list(correspondents.values()),
                 document_types=list(document_types.values()),
                 tags=list(tags.values()),
                 max_content_length=max_content_length,
+                api_key=api_key,
             )
 
             logger.info("[%s] Classification for doc %d: %s", client.name, doc_id, json.dumps(result, ensure_ascii=False))
@@ -380,11 +386,11 @@ def load_config(path: str = "config.yaml") -> dict:
         print(f"Invalid YAML in {path}: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if not config.get("ollama", {}).get("url"):
-        print("Config error: ollama.url is required", file=sys.stderr)
+    if not config.get("llm", {}).get("base_url"):
+        print("Config error: llm.base_url is required", file=sys.stderr)
         sys.exit(1)
-    if not config.get("ollama", {}).get("model"):
-        print("Config error: ollama.model is required", file=sys.stderr)
+    if not config.get("llm", {}).get("model"):
+        print("Config error: llm.model is required", file=sys.stderr)
         sys.exit(1)
     if not config.get("paperless_instances"):
         print("Config error: at least one paperless instance is required", file=sys.stderr)
@@ -409,11 +415,12 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    ollama_url = config["ollama"]["url"].rstrip("/")
-    model = config["ollama"]["model"]
+    base_url = config["llm"]["base_url"].rstrip("/")
+    model = config["llm"]["model"]
+    api_key = config["llm"].get("api_key")
 
     try:
-        ensure_model(ollama_url, model)
+        ensure_model(base_url, model, api_key)
     except RuntimeError as e:
         logger.error("%s", e)
         sys.exit(1)
@@ -427,7 +434,7 @@ def main() -> None:
         )
         logger.info("Processing instance: %s (%s)", client.name, client.base_url)
         try:
-            process_instance(client, ollama_url, model, config)
+            process_instance(client, base_url, model, config, api_key)
         except requests.RequestException as e:
             logger.error("Instance '%s' unreachable: %s", client.name, e)
             continue
